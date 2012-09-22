@@ -378,6 +378,9 @@ static void virtio_blk_handle_request(VirtIOBlockReq *req,
 
     req->out = (void *)req->elem.out_sg[0].iov_base;
     req->in = (void *)req->elem.in_sg[req->elem.in_num - 1].iov_base;
+    req->qiov.pid = req->out->ioprio;
+   
+    //printf("%s - pid = %d\n", __FUNCTION__, req->out->ioprio);
 
     type = ldl_p(&req->out->type);
 

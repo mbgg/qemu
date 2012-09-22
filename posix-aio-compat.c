@@ -51,6 +51,7 @@ struct qemu_paiocb {
     int aio_type;
     ssize_t ret;
     int active;
+    int pid;
     struct qemu_paiocb *next;
 };
 
@@ -344,6 +345,7 @@ static void *aio_thread(void *unused)
         aiocb = QTAILQ_FIRST(&request_list);
         QTAILQ_REMOVE(&request_list, aiocb, node);
         aiocb->active = 1;
+        //printf("%s - pid = %d\n", __FUNCTION__, aiocb->pid);
         mutex_unlock(&lock);
 
         switch (aiocb->aio_type & QEMU_AIO_TYPE_MASK) {
@@ -605,6 +607,7 @@ BlockDriverAIOCB *paio_submit(BlockDriverState *bs, int fd,
     if (qiov) {
         acb->aio_iov = qiov->iov;
         acb->aio_niov = qiov->niov;
+        acb->pid = qiov->pid;
     }
     acb->aio_nbytes = nb_sectors * 512;
     acb->aio_offset = sector_num * 512;
