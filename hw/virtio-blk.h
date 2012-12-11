@@ -78,6 +78,8 @@ struct virtio_blk_outhdr
     uint32_t ioprio;
     /* Sector (ie. 512 byte offset) */
     uint64_t sector;
+    /* PID of thread*/
+    pid_t pid;
 };
 
 #define VIRTIO_BLK_S_OK         0
