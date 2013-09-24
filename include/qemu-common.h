@@ -328,6 +328,7 @@ typedef struct QEMUIOVector {
     int niov;
     int nalloc;
     size_t size;
+    int pid;
 } QEMUIOVector;
 
 void qemu_iovec_init(QEMUIOVector *qiov, int alloc_hint);

@@ -167,6 +167,7 @@ typedef struct RawPosixAIOData {
 #define aio_ioctl_cmd   aio_nbytes /* for QEMU_AIO_IOCTL */
     off_t aio_offset;
     int aio_type;
+    int pid;
 } RawPosixAIOData;
 
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
@@ -802,6 +803,7 @@ static BlockDriverAIOCB *paio_submit(BlockDriverState *bs, int fd,
     if (qiov) {
         acb->aio_iov = qiov->iov;
         acb->aio_niov = qiov->niov;
+        acb->pid = qiov->pid;
     }
     acb->aio_nbytes = nb_sectors * 512;
     acb->aio_offset = sector_num * 512;

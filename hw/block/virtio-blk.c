@@ -37,6 +37,7 @@ typedef struct VirtIOBlockReq
     QEMUIOVector qiov;
     struct VirtIOBlockReq *next;
     BlockAcctCookie acct;
+    int pid;
 } VirtIOBlockReq;
 
 static void virtio_blk_req_complete(VirtIOBlockReq *req, int status)
@@ -357,6 +358,8 @@ static void virtio_blk_handle_request(VirtIOBlockReq *req,
 
     req->out = (void *)req->elem.out_sg[0].iov_base;
     req->in = (void *)req->elem.in_sg[req->elem.in_num - 1].iov_base;
+    req->pid = req->out->ioprio;
+//printf("request %lu with pid %d\n", req->out->sector ,req->pid);
 
     type = ldl_p(&req->out->type);
 
