@@ -192,10 +192,10 @@ GSource *aio_get_g_source(AioContext *ctx)
     return &ctx->source;
 }
 
-ThreadPool *aio_get_thread_pool(AioContext *ctx)
+ThreadPool *aio_get_thread_pool(AioContext *ctx, ThreadPoolFuncArr *tpf)
 {
     if (!ctx->thread_pool) {
-        ctx->thread_pool = thread_pool_new(ctx);
+        ctx->thread_pool = tpf->thread_pool_new(ctx);
     }
     return ctx->thread_pool;
 }

@@ -470,6 +470,18 @@ DriveInfo *drive_init(QemuOpts *all_opts, BlockInterfaceType block_default_type)
     }
 #endif
 
+    /* TODO we have to check that virtio is used for this drive */
+    if ((buf = qemu_opt_get(opts, "workerthreads")) != NULL) {
+        if (!strcmp(buf, "vpid")) {
+            bdrv_flags |= BDRV_O_VPID;
+        } else if (!strcmp(buf, "pool")) {
+            /* this is the default */
+        } else {
+            error_report("invalid workerthreads option");
+            return NULL;
+        }
+    }
+
     if ((buf = qemu_opt_get(opts, "format")) != NULL) {
         if (is_help_option(buf)) {
             error_printf("Supported formats:");
@@ -1553,6 +1565,10 @@ QemuOptsList qemu_common_drive_opts = {
             .type = QEMU_OPT_STRING,
             .help = "interface (ide, scsi, sd, mtd, floppy, pflash, virtio)",
         },{
+            .name = "workerthreads",
+            .type = QEMU_OPT_STRING,
+            .help = "type of worker threads (pool, vpid)",
+        },{
             .name = "index",
             .type = QEMU_OPT_NUMBER,
             .help = "index number",
@@ -1674,6 +1690,10 @@ QemuOptsList qemu_drive_opts = {
             .name = "if",
             .type = QEMU_OPT_STRING,
             .help = "interface (ide, scsi, sd, mtd, floppy, pflash, virtio)",
+        },{
+            .name = "workerthreads",
+            .type = QEMU_OPT_STRING,
+            .help = "type of worker threads (pool, vpid)",
         },{
             .name = "index",
             .type = QEMU_OPT_NUMBER,

@@ -78,6 +78,7 @@ struct ThreadPool {
     bool stopping;
 };
 
+
 static void *worker_thread(void *opaque)
 {
     ThreadPool *pool = opaque;
@@ -351,4 +352,30 @@ void thread_pool_free(ThreadPool *pool)
     qemu_mutex_destroy(&pool->lock);
     event_notifier_cleanup(&pool->notifier);
     g_free(pool);
+}
+
+ThreadPoolFuncArr *tpf_pool = NULL;
+ThreadPoolFuncArr *tpf_vpid = NULL;
+
+ThreadPoolFuncArr *thread_pool_init(void)
+{
+    if (tpf_pool)
+        return tpf_pool;
+
+    tpf_pool = g_new(ThreadPoolFuncArr, 1);
+    if (!tpf_pool) {
+        printf("error allocating thread pool\n");
+        return NULL;
+    }
+
+    tpf_pool->thread_pool_submit_aio = thread_pool_submit_aio;
+    tpf_pool->thread_pool_new = thread_pool_new;
+    tpf_pool->thread_pool_free = thread_pool_free;
+
+    return tpf_pool;
+}
+
+ThreadPoolFuncArr *thread_pool_vpid_init(void)
+{
+	return thread_pool_init();
 }
