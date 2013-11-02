@@ -38,4 +38,15 @@ int coroutine_fn thread_pool_submit_co(ThreadPool *pool,
         ThreadPoolFunc *func, void *arg);
 void thread_pool_submit(ThreadPool *pool, ThreadPoolFunc *func, void *arg);
 
+ThreadPoolFuncArr *thread_pool_probe(void);
+void thread_pool_delete(ThreadPoolFuncArr *tpf);
+
+struct ThreadPoolFuncArr {
+    BlockDriverAIOCB *(*thread_pool_submit_aio)(ThreadPool *pool,
+        ThreadPoolFunc *func, void *arg, BlockDriverCompletionFunc *cb,
+        void *opaque);
+    ThreadPool *(*thread_pool_new)(AioContext *ctx);
+};
+
+
 #endif

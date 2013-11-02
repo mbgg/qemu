@@ -26,6 +26,7 @@
 #include "qemu/main-loop.h"
 
 static void do_spawn_thread(ThreadPool *pool);
+static void thread_pool_aio_free(ThreadPool *pool);
 
 typedef struct ThreadPoolElement ThreadPoolElement;
 
@@ -77,6 +78,7 @@ struct ThreadPool {
     int pending_threads; /* threads created but not running yet */
     int pending_cancellations; /* whether we need a cond_broadcast */
     bool stopping;
+    void (*thread_pool_free)(ThreadPool *pool);
 };
 
 static void *worker_thread(void *opaque)
@@ -300,6 +302,7 @@ static void thread_pool_init_one(ThreadPool *pool, AioContext *ctx)
     qemu_sem_init(&pool->sem, 0);
     pool->max_threads = 64;
     pool->new_thread_bh = aio_bh_new(ctx, spawn_thread_bh_fn, pool);
+    pool->thread_pool_free = &thread_pool_aio_free;
 
     QLIST_INIT(&pool->head);
     QTAILQ_INIT(&pool->request_list);
@@ -315,6 +318,11 @@ ThreadPool *thread_pool_new(AioContext *ctx)
 }
 
 void thread_pool_free(ThreadPool *pool)
+{
+    pool->thread_pool_free(pool);
+}
+
+void thread_pool_aio_free(ThreadPool *pool)
 {
     if (!pool) {
         return;
@@ -345,4 +353,29 @@ void thread_pool_free(ThreadPool *pool)
     qemu_mutex_destroy(&pool->lock);
     event_notifier_cleanup(&pool->notifier);
     g_free(pool);
+}
+
+ThreadPoolFuncArr *thread_pool_probe(void)
+{
+    ThreadPoolFuncArr *tpf_pool = NULL;
+
+    if (tpf_pool) {
+        return tpf_pool;
+    }
+
+    tpf_pool = g_new(ThreadPoolFuncArr, 1);
+    if (!tpf_pool) {
+        printf("error allocating thread pool\n");
+        return NULL;
+    }
+
+    tpf_pool->thread_pool_submit_aio = thread_pool_submit_aio;
+    tpf_pool->thread_pool_new = thread_pool_new;
+
+    return tpf_pool;
+}
+
+void thread_pool_delete(ThreadPoolFuncArr *tpf)
+{
+    g_free(tpf);
 }
