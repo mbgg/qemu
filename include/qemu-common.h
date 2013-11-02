@@ -478,4 +478,6 @@ size_t buffer_find_nonzero_offset(const void *buf, size_t len);
  */
 int parse_debug_env(const char *name, int max, int initial);
 
+typedef struct ThreadPoolFuncArr ThreadPoolFuncArr;
+
 #endif

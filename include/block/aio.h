@@ -231,7 +231,7 @@ void aio_set_event_notifier(AioContext *ctx,
 GSource *aio_get_g_source(AioContext *ctx);
 
 /* Return the ThreadPool bound to this AioContext */
-struct ThreadPool *aio_get_thread_pool(AioContext *ctx);
+struct ThreadPool *aio_get_thread_pool(AioContext *ctx, ThreadPoolFuncArr *tpf);
 
 /* Functions to operate on the main QEMU AioContext.  */
 

@@ -142,6 +142,7 @@ typedef struct BDRVRawState {
     bool is_xfs : 1;
 #endif
     bool has_discard : 1;
+    ThreadPoolFuncArr *tpf;
 } BDRVRawState;
 
 typedef struct BDRVRawReopenState {
@@ -345,6 +346,9 @@ static int raw_open(BlockDriverState *bs, QDict *options, int flags,
     int ret;
 
     s->type = FTYPE_FILE;
+
+    s->tpf = thread_pool_probe();
+
     ret = raw_open_common(bs, options, flags, 0, &local_err);
     if (error_is_set(&local_err)) {
         error_propagate(errp, local_err);
@@ -792,6 +796,7 @@ static BlockDriverAIOCB *paio_submit(BlockDriverState *bs, int fd,
         int64_t sector_num, QEMUIOVector *qiov, int nb_sectors,
         BlockDriverCompletionFunc *cb, void *opaque, int type)
 {
+    BDRVRawState *s = bs->opaque;
     RawPosixAIOData *acb = g_slice_new(RawPosixAIOData);
     ThreadPool *pool;
 
@@ -807,8 +812,8 @@ static BlockDriverAIOCB *paio_submit(BlockDriverState *bs, int fd,
     acb->aio_offset = sector_num * 512;
 
     trace_paio_submit(acb, opaque, sector_num, nb_sectors, type);
-    pool = aio_get_thread_pool(bdrv_get_aio_context(bs));
-    return thread_pool_submit_aio(pool, aio_worker, acb, cb, opaque);
+    pool = aio_get_thread_pool(bdrv_get_aio_context(bs), s->tpf);
+    return s->tpf->thread_pool_submit_aio(pool, aio_worker, acb, cb, opaque);
 }
 
 static BlockDriverAIOCB *raw_aio_submit(BlockDriverState *bs,
@@ -874,6 +879,8 @@ static void raw_close(BlockDriverState *bs)
         qemu_close(s->fd);
         s->fd = -1;
     }
+
+    thread_pool_delete(s->tpf);
 }
 
 static int raw_truncate(BlockDriverState *bs, int64_t offset)
@@ -1490,8 +1497,8 @@ static BlockDriverAIOCB *hdev_aio_ioctl(BlockDriverState *bs,
     acb->aio_offset = 0;
     acb->aio_ioctl_buf = buf;
     acb->aio_ioctl_cmd = req;
-    pool = aio_get_thread_pool(bdrv_get_aio_context(bs));
-    return thread_pool_submit_aio(pool, aio_worker, acb, cb, opaque);
+    pool = aio_get_thread_pool(bdrv_get_aio_context(bs), s->tpf);
+    return s->tpf->thread_pool_submit_aio(pool, aio_worker, acb, cb, opaque);
 }
 
 #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__)

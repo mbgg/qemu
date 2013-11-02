@@ -46,6 +46,7 @@ typedef struct RawWin32AIOData {
     size_t aio_nbytes;
     off64_t aio_offset;
     int aio_type;
+    ThreadPoolFuncArr *tpf;
 } RawWin32AIOData;
 
 typedef struct BDRVRawState {
@@ -159,8 +160,8 @@ static BlockDriverAIOCB *paio_submit(BlockDriverState *bs, HANDLE hfile,
     acb->aio_offset = sector_num * 512;
 
     trace_paio_submit(acb, opaque, sector_num, nb_sectors, type);
-    pool = aio_get_thread_pool(bdrv_get_aio_context(bs));
-    return thread_pool_submit_aio(pool, aio_worker, acb, cb, opaque);
+    pool = aio_get_thread_pool(bdrv_get_aio_context(bs), s->tpf);
+    return s->tpf->thread_pool_submit_aio(pool, aio_worker, acb, cb, opaque);
 }
 
 int qemu_ftruncate64(int fd, int64_t length)
@@ -247,6 +248,8 @@ static int raw_open(BlockDriverState *bs, QDict *options, int flags,
     int ret;
 
     s->type = FTYPE_FILE;
+
+    s->tpf = thread_pool_probe();
 
     opts = qemu_opts_create_nofail(&raw_runtime_opts);
     qemu_opts_absorb_qdict(opts, options, &local_err);
@@ -339,6 +342,8 @@ static void raw_close(BlockDriverState *bs)
 {
     BDRVRawState *s = bs->opaque;
     CloseHandle(s->hfile);
+
+    thread_pool_delete(s->tpf);
 }
 
 static int raw_truncate(BlockDriverState *bs, int64_t offset)
