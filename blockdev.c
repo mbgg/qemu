@@ -387,6 +387,15 @@ static DriveInfo *blockdev_init(QDict *bs_opts,
         }
     }
 #endif
+    buf = qemu_opt_get(opts, "workerthreads");
+    if (buf != NULL) {
+        if (!strcmp(buf, "pool")) {
+            /* this is the default */
+        } else {
+            error_report("invalid workerthreads option");
+            return NULL;
+        }
+    }
 
     if ((buf = qemu_opt_get(opts, "format")) != NULL) {
         if (is_help_option(buf)) {
@@ -2268,6 +2277,10 @@ QemuOptsList qemu_common_drive_opts = {
             .name = "serial",
             .type = QEMU_OPT_STRING,
             .help = "disk serial number",
+        },{
+            .name = "workerthreads",
+            .type = QEMU_OPT_STRING,
+            .help = "type of worker threads (pool)",
         },{
             .name = "rerror",
             .type = QEMU_OPT_STRING,
