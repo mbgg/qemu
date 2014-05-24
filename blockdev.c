@@ -388,6 +388,18 @@ static DriveInfo *blockdev_init(QDict *bs_opts,
     }
 #endif
 
+    /* TODO we have to check that virtio is used for this drive */
+    if ((buf = qemu_opt_get(opts, "workerthreads")) != NULL) {
+        if (!strcmp(buf, "vpid")) {
+            bdrv_flags |= BDRV_O_VPID;
+        } else if (!strcmp(buf, "pool")) {
+            /* this is the default */
+        } else {
+            error_report("invalid workerthreads option");
+            return NULL;
+        }
+    }
+
     if ((buf = qemu_opt_get(opts, "format")) != NULL) {
         if (is_help_option(buf)) {
             error_printf("Supported formats:");
@@ -2268,6 +2280,10 @@ QemuOptsList qemu_common_drive_opts = {
             .name = "serial",
             .type = QEMU_OPT_STRING,
             .help = "disk serial number",
+        },{
+            .name = "workerthreads",
+            .type = QEMU_OPT_STRING,
+            .help = "type of worker threads (pool, vpid)",
         },{
             .name = "rerror",
             .type = QEMU_OPT_STRING,

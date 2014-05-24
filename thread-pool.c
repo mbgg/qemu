@@ -48,6 +48,7 @@ struct ThreadPoolElement {
      */
     enum ThreadState state;
     int ret;
+    int list_index;
 
     /* Access to this list is protected by lock.  */
     QTAILQ_ENTRY(ThreadPoolElement) reqs;
@@ -77,6 +78,8 @@ struct ThreadPool {
     int pending_threads; /* threads created but not running yet */
     int pending_cancellations; /* whether we need a cond_broadcast */
     bool stopping;
+    void (*thread_pool_free)(ThreadPool *pool);
+    void *private; /* data private to each thread pool implementation */
 };
 
 static void *worker_thread(void *opaque)
@@ -300,6 +303,7 @@ static void thread_pool_init_one(ThreadPool *pool, AioContext *ctx)
     qemu_sem_init(&pool->sem, 0);
     pool->max_threads = 64;
     pool->new_thread_bh = aio_bh_new(ctx, spawn_thread_bh_fn, pool);
+    pool->thread_pool_free = &thread_pool_free;
 
     QLIST_INIT(&pool->head);
     QTAILQ_INIT(&pool->request_list);
@@ -345,4 +349,220 @@ void thread_pool_free(ThreadPool *pool)
     qemu_mutex_destroy(&pool->lock);
     event_notifier_cleanup(&pool->notifier);
     g_free(pool);
+}
+
+ThreadPoolFuncArr *thread_pool_probe(void)
+{
+    ThreadPoolFuncArr *tpf_pool = NULL;
+
+    if (tpf_pool)
+        return tpf_pool;
+
+    tpf_pool = g_new(ThreadPoolFuncArr, 1); //TODO right now, this leaks!
+    if (!tpf_pool) {
+        printf("error allocating thread pool\n");
+        return NULL;
+    }
+
+    tpf_pool->thread_pool_submit_aio = thread_pool_submit_aio;
+    tpf_pool->thread_pool_new = thread_pool_new;
+    tpf_pool->thread_pool_free = thread_pool_free;
+
+    return tpf_pool;
+}
+
+/********************************************************/
+/* VPID */
+
+struct req_list {
+    ThreadPoolElement *tqh_first;     /* first element */             
+    ThreadPoolElement *tqh_last;      /* addr of last next element */ 
+};
+
+struct ThreadPrivateVpid {
+    struct req_list *request_list;
+    QemuSemaphore *sem;	
+}
+
+typedef struct ThreadPrivateVpid ThreadPrivateVpid;
+
+static int thread_pool_vpid_get_index(ThreadPoolVpid *pool, BlockDriverAIOCB *acb)
+{
+    return acb->aiocb_info->pid % pool->max_threads;
+}
+
+struct ThreadData {
+	struct ThreadPoolVpid *pool;
+	int list_index;
+};
+typedef struct ThreadData ThreadData;
+
+static void *worker_thread_vpid(void *opaque)
+{
+    ThreadData *thread_data;
+    ThreadPool *pool;
+    ThreadPrivateVpid *private;
+    int list_index; 
+
+    thread_data = opaque;
+    pool = thread_data->pool;
+    private = pool->private;
+    list_index = thread_data->list_index;
+
+//    qemu_mutex_lock(&pool->lock);
+
+    while (!pool->stopping) {
+        ThreadPoolVpidElement *req;
+        int ret;
+
+        do {
+//            qemu_mutex_unlock(&pool->lock);
+            ret = qemu_sem_timedwait(&private->sem[list_index], 10000);
+//            qemu_mutex_lock(&pool->lock);
+        } while (ret == -1 && !QTAILQ_EMPTY(&private->request_list[list_index]));
+        if (ret == -1 || pool->stopping) {
+            break;
+        }
+
+        req = QTAILQ_FIRST(&private->request_list[list_index]);
+        QTAILQ_REMOVE(&private->request_list[list_index], req, reqs);
+        req->state = THREAD_ACTIVE;
+//        qemu_mutex_unlock(&pool->lock);
+
+        ret = req->func(req->arg);
+
+        req->ret = ret;
+        /* Write ret before state.  */
+        smp_wmb();
+        req->state = THREAD_DONE;
+
+//        qemu_mutex_lock(&pool->lock);
+        if (pool->pending_cancellations) {
+            qemu_cond_broadcast(&pool->check_cancel);
+        }
+
+        event_notifier_set(&pool->notifier);
+    }
+
+    pool->cur_threads--;
+    qemu_cond_signal(&pool->worker_stopped);
+//    qemu_mutex_unlock(&pool->lock);
+    return NULL;
+}
+
+BlockDriverAIOCB *thread_pool_vpid_submit_aio(ThreadPool *pool,
+        ThreadPoolFunc *func, void *arg,
+        BlockDriverCompletionFunc *cb, void *opaque)
+{
+    ThreadPoolElement *req;
+    ThreadPrivateVpid *private;
+
+    private = pool->private;
+
+    req = qemu_aio_get(&thread_pool_aiocb_info, NULL, cb, opaque);
+    req->func = func;
+    req->arg = arg;
+    req->state = THREAD_QUEUED;
+    req->pool = pool;
+
+    req->list_index = thread_pool_vpid_get_index(pool, acb);
+
+    QLIST_INSERT_HEAD(&pool->head, req, all);
+
+    trace_thread_pool_submit(pool, req, arg);
+
+
+//    qemu_mutex_lock(&pool->lock);
+    QTAILQ_INSERT_TAIL(&private->request_list[req->list_index], req, reqs);
+//    qemu_mutex_unlock(&pool->lock);
+    qemu_sem_post(&private->sem[req->list_index]);
+    return &req->common;
+}
+
+void thread_pool_vpid_free(ThreadPool *pool)
+{
+    ThreadPrivateVpid *private;
+    if (!pool) {
+        return;
+    }
+
+    assert(QLIST_EMPTY(&pool->head));
+
+    qemu_mutex_lock(&pool->lock);
+
+    private = pool->private;
+
+    /* Stop new threads from spawning */
+    pool->cur_threads -= pool->new_threads;
+    pool->new_threads = 0;
+
+    /* Wait for worker threads to terminate */
+    // go through all sem's and kill threads
+    pool->stopping = true;
+    while (pool->cur_threads > 0) {
+        for (i=0;i<pool->max_threads;i++)
+            qemu_sem_post(&private->sem[i]);
+        qemu_cond_wait(&pool->worker_stopped, &pool->lock);
+    }
+
+    qemu_mutex_unlock(&pool->lock);
+
+    aio_set_event_notifier(pool->ctx, &pool->notifier, NULL);
+    for (i=0;i<pool->max_threads;i++)
+	    qemu_sem_destroy(&private->sem);
+    qemu_cond_destroy(&pool->check_cancel);
+    qemu_cond_destroy(&pool->worker_stopped);
+    qemu_mutex_destroy(&pool->lock);
+    event_notifier_cleanup(&pool->notifier);
+
+    if (pool->private)
+        g_free(pool->private);
+    g_free(pool);
+}
+
+static void thread_pool_vpid_init_one(ThreadPool *pool, AioContext *ctx, ThreadPoolFuncArr *tpf)
+{
+    struct ThreadPrivateVpid *private;
+    struct ThreadData *td; //TODO right now this leaks!
+    
+    private = g_new(ThreadPoolVpid, 1);  
+
+    if (!ctx) {
+        ctx = qemu_get_aio_context();
+    }
+
+    memset(pool, 0, sizeof(*pool));
+    event_notifier_init(&pool->notifier, false);
+    pool->ctx = ctx;
+    qemu_mutex_init(&pool->lock);
+    qemu_cond_init(&pool->check_cancel);
+    qemu_cond_init(&pool->worker_stopped);
+    qemu_sem_init(&pool->sem, 0);
+    pool->max_threads = 64;
+    pool->cur_threads = 0;
+    pool->private = private;
+    pool->thread_pool_free = &thread_pool_vpid_free;
+
+    QLIST_INIT(&pool->head);
+    
+    private->sem = g_new(QemuSemaphore, pool->max_threads);
+    private->request_list = g_new(struct req_list, pool->max_threads);
+
+    for (i=0; i < pool->max_threads; i++) {
+    	td = g_new(ThreadData, 1);
+	td->poll = pool;
+	td->list_index = i;
+    	qemu_sem_init(&private->sem[i], 0);
+        QTAILQ_INIT(&private->request_list[i]);
+    	qemu_thread_create(&t, worker_thread_vpid, td, QEMU_THREAD_DETACHED);
+	pool->cur_threads++;
+    }
+
+    aio_set_event_notifier(ctx, &pool->notifier, event_notifier_ready,
+                           thread_pool_active);
+}
+
+ThreadPoolFuncArr *thread_pool_vpid_probe(void)
+{
+	return thread_pool_probe();
 }
